@@ -39,7 +39,8 @@ In this approach, all normal observing requests are mediated by the queue and th
 
 \section{Observing with a Queue}
 
-An observing queue is a list of observing scripts with associated parameters, where the observation at position 0 is the observation that will be observed when the current observation completes and planned observations sit behind it in the queue.
+An observing queue is a list of observing scripts with associated parameters, where the observation at position 0 is the currently execution observation most recently sent by the queue.
+The observation at position 1 is the observation that will be observed when the current observation completes and further planned observations sit behind it in the queue.
 A queue expands on the concept of "nextVisit" by allowing authorized observers the ability to plan out an observing program efficiently, without constraining the behavior of the scheduler.
 The scheduler and the observers interact with the same queue to control what should happen next at the observatory.
 
@@ -103,9 +104,12 @@ Adding 5 minutes of deep drilling observations to the queue at one time would in
 There is no requirement for the scheduler to do this, but the flexibility is there at no additional cost to the queue implementation.
 The operator can still pause/clear the queue if they have to override observing.
 
-TBD: If the scheduler adds multiple observations to the queue, it might be desirable for the queue to be able to retain the grouping of related observations, for example, in rejecting attempts to insert new observations into the middle of the observing block, or allowing a command to remove all related entries from the queue by specifying either the index or insertion ID of a single observation.
+If the queue is paused and the queue is empty, for example the previous nextVisit expired, the scheduler has the option of continually adding items to the queue following the logic above.
+In this way if the queue restarts there is always something ready to be executed.
+If the operator does not want the scheduler interfering, the scheduler can be paused.
 
-TBD: In paused state the scheduler should not continually try to add items to the queue, waiting for them to expire, and then adding new ones.
+TBD: If the scheduler adds multiple observations to the queue, it might be desirable for the queue to be able to retain the grouping of related observations, for example, in rejecting attempts to insert new observations into the middle of the observing block, or allowing a command to remove all related entries from the queue by specifying either the index or insertion ID of a single observation.
+In this mode, they should probably all be given the same unique "transaction" label.
 
 \subsection{Prompt Processing Interaction with Queue}
 
@@ -116,7 +120,8 @@ To make it easier for DM to spot missing data, the unique label should finish wi
 
 If the item at the top of the queue passes its expiry date (or is removed by some other means without being sent for observation), this change of status of NextVisit will be broadcast so that DM can stop waiting for data that will never appear.
 
-TBD: Do only standard visits get unique labels? Or do all observations get labeled? Prompt Processing should be able to know to either ignore or completely reconfigure.
+All observation requests will be given unique labels, "transaction ids", when they get to the nextVisit position in the queue.
+The prompt processing system will have enough information to decide whether the data from that observation should be processed.
 
 \subsection{User Interaction with Queue}
 
@@ -189,23 +194,23 @@ Remove all entries from the queue, including the next visit.
 Add a single observation with the specified parameters to the back of the queue.
 The observation script can be specified either as the name of an observing mode (which will correspond to an observing script in a standard location), the name of an observing script in a standard location, or the full path of a compliant executable.
 
-\item[ocsq addfront altvisit --radec...]
-
-Takes the same arguments as \texttt{addback} but adds the observation to the front of the queue, overriding nextVisit and forcing a reconfiguration of the DM system.
-It may be necessary to have a version of this command that always places the observing request at index 1 rather than index 0 (so does not immediately change nextVisit).
 
 \item[ocsq insert \$i flatfield --filter=g --exptime=300]
 
-Insert the observation at a specific location by index.
+Insert the observation at a specific location by index, moving the observation currently at that position down by one.
+This command will refuse to accept an index of 0 corresponding to the currently executing observation.
+Index 1 is the nextVisit slot.
+In most cases we do not want to change the next visit observation since this is being used by systems such as the dome and the prompt processing system to prepare.
+In the rare case where we do want to override next visit a \texttt{--force} parameter should be specified to indicate that you really do want to insert into position \#1.
 
-\item[ocsq cut \$id]
+\item[ocsq cut --id=\$id]
 
 Remove the item from the queue using the ID returned by a previous command to add the item to the queue.
 
-\item[ocsq cut --id=\$i --n=3]
+\item[ocsq cut --index=\$i --count=4]
 
 Remove the item from the queue at index \$i.
-The optional argument can specify how many elements to remove, defaulting to one.
+The optional argument, \texttt{--count}, can specify how many elements to remove, defaulting to one.
 
 \item[ocsq status]
 
