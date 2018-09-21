@@ -206,11 +206,9 @@ In the rare case where we do want to override next visit a \texttt{--force} para
 \item[ocsq cut --id=\$id]
 
 Remove the item from the queue using the ID returned by a previous command to add the item to the queue.
+The ID will be published as part of the queue state so is discoverable by user interfaces.
 
-\item[ocsq cut --index=\$i --count=4]
-
-Remove the item from the queue at index \$i.
-The optional argument, \texttt{--count}, can specify how many elements to remove, defaulting to one.
+TBD: If multiple observation requests are inserted at once and if they all have the same transaction ID, decided if cut removes them all.
 
 \item[ocsq status]
 
