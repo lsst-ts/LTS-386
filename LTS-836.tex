@@ -43,7 +43,9 @@ An observing queue is a list of observing scripts with associated parameters, wh
 A queue expands on the concept of "nextVisit" by allowing authorized observers the ability to plan out an observing program efficiently, without constraining the behavior of the scheduler.
 The scheduler and the observers interact with the same queue to control what should happen next at the observatory.
 
-Observations can be added to the end of the queue, the front of it, or to specific locations (if for example, the operator remembers an extra calibration should be done in front of the observation at position 3); observations can be removed from the queue individually or in bulk; and the queue itself can either be in a running state, where observations are sent immediately others are completed, or paused, the queue can be rearranged and edited but no observations will be sent.
+Observations can be added to the end of the queue, the front of it, or to specific locations (if for example, the operator remembers an extra calibration should be done in front of the observation at position 3).
+They can also be removed from the queue individually or in bulk.
+The queue itself can either be in a running state, where observations are sent immediately after others are completed, or paused, the queue can be rearranged and edited but no observations will be sent.
 
 To get the full benefit of a queue, there must be a visualization of the queue status available using the standard monitoring and visualization system, and for authorized users this queue visualization must be interactive.
 
