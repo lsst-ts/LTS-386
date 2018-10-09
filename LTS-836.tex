@@ -28,45 +28,47 @@ the observing experience.
 \section{Introduction}
 
 Observing efficiency is a key metric for a modern telescope.
-LSST has been designed to be efficient for survey observing where the scheduler continually publishes the next visit that should be observed and the OCS takes that suggestion and executes the observation with minimal delay.
-This design works well for the main use case, but as soon as non-survey observing is required, for example commissioning observations, regular daily calibration observing (flatfields, full array defocus), or engineering observations, the system becomes a much more interactive process where the telescope operator must wait until the telescope is idle before requesting new observations, and furthermore it is very difficult to plan an observing program when only a single observing script can be thought about at any one time.
+LSST has been designed to be efficient for automated survey observing where the scheduler continually publishes the next visit that should be observed and the OCS takes that suggestion and executes the observation with minimal delay.
+This design works well for the main use case, but as soon as non-survey observing is required, for example commissioning observations, regular daily calibration observing (flatfields, full array defocus), or engineering observations, observing becomes a much more interactive process where the telescope operator must wait until the telescope is idle before requesting new observations, and furthermore it is very difficult to plan an observing program when only a single observation can be thought about at any one time.
 
 In this document we propose an enhancement to the current observing strategy by the addition of an observation queue.
 Conceptually the queue sits in front of the OCS Executive and hands off observations to the OCS for observing.
 Once the OCS reports that there are no active observations the queue would automatically send the next observation to the OCS for execution.
-In this approach, all normal observing requests are mediated by the queue and the queue is the only system that should be able to request an observation be executed by the OCS Executive.\footnote{Interactive observing and observing script development can bypass the normal observing constraints and control Commandable SAL Components (CSCs) directly, but this is not how normal observing will be commanded.}
+In this approach, all normal observing requests are mediated by the queue and the queue is the only component that should be able to request an observation be executed by the OCS Executive.\footnote{Manual and script-driven observing can bypass the normal observing constraints and control Commandable SAL Components (CSCs) directly, but this is not how normal observing will be commanded.}
 
 
 \section{Observing with a Queue}
 
-An observing queue is a list of observing scripts with associated parameters, where the observation at position 0 is the currently execution observation most recently sent by the queue.
+An observing queue is a list of observing requests with associated parameters, where the observation at position 0 is the observation request most recently sent by the queue.
 The observation at position 1 is the observation that will be observed when the current observation completes and further planned observations sit behind it in the queue.
-A queue expands on the concept of "nextVisit" by allowing authorized observers the ability to plan out an observing program efficiently, without constraining the behavior of the scheduler.
+A queue expands on the concept of \texttt{nextVisit} by allowing authorized observers the ability to plan out an observing program efficiently, without constraining the behavior of the scheduler.
 The scheduler and the observers interact with the same queue to control what should happen next at the observatory.
 
 Observations can be added to the end of the queue, the front of it, or to specific locations (if for example, the operator remembers an extra calibration should be done in front of the observation at position 3).
 They can also be removed from the queue individually or in bulk.
 The queue itself can either be in a running state, where observations are sent immediately after others are completed, or paused, the queue can be rearranged and edited but no observations will be sent.
 
-To get the full benefit of a queue, there must be a visualization of the queue status available using the standard monitoring and visualization system, and for authorized users this queue visualization must be interactive.
+To get the full benefit of a queue, there should be a visualization of the queue status available using the standard monitoring and visualization system, and for authorized users this queue visualization should be interactive.
+This interactive visualization enables the operator to pause/enable the queue and make simple adjustments to the contents of the queue without having to use command-line tools.
 
-In the following sections we describe how separate entities at the observatroy interact with the queue.
+In the following sections we describe how separate entities at the observatory interact with the queue.
+In many cases, the functionality is not required to be restricted to a particular entity.
+For example, the interactions required by the scheduler, will be available to any clients wishing to interact with the queue.
+The scheduler is being used as an example that drives the design.
 
 \subsection{Queue Introspection of Observations}
 
-Observations are added to the queue as either the name of a standard observing mode, a path to an observing script, or the name of an observing script located in a predefined location.
-Additionally, parameters will be provided as keyword/value pairs.
-These parameters will be understood by the script (which should object if it does not understand them) and may include items such as ra/dec to track, survey field or target name, filter to use, exposure time, and queue expiry time.
+Observations may be added to the queue as either the name of a standard observing sequence or the name of an observing script located in a predefined location.\footnote{It is expected that one of these scripting locations could be a directory accessible to commissioning scientists specifically to allow rapid development and testing of observing scripts. The scheme by which enabling or disabling of these additional search paths is implemented is beyond the scope of this document.}
+The name of an observing sequence can be mapped to an equivalent standard observing script if necessary.
+Parameters will be provided as keyword/value pairs and these parameters may include items such as ra/dec to track, survey field or target name, filter to use, exposure time, and queue expiry time.
 
-On receiving the command to add the item to the queue, the queue will run the observing script (method yet to be decided) with the supplied parameters in a special mode that will result in the observing script returning summary information to allow the queue to properly handle the observation.
-The form of the response is to be decided (JSON, SAL topic) but should look like keyword/value pairs and possibly be hierarchical.
-
-The information content for this observation introspection should include:
+On receiving the command to add the item to the queue, the queue has to determine certain properties of the observation request.
+The information content for this observation request description should include:
 
 \begin{itemize}
   \item Estimated duration of the observation in seconds.
   \item Human readable summary string to display in the queue.
-  \item List of CSCs required by the observing script.
+  \item List of CSCs required for the observation.
   \item Not to be observed until time (optional) to constrain the observation to allow the queue to defer sending until it will be executed.
   \item Predicted observatory state (for the current time, and the estimated end of the observation).\footnote{Should the queue inform the script of the estimated duration of queue entries in front of it?}
 \end{itemize}
@@ -74,15 +76,20 @@ The information content for this observation introspection should include:
 Observatory state includes the ra/dec of the tracking centre or AZEL (e.g., for a dome flat), and the filter.
 Since the observation will not know when it is going to be executed, it cannot accurately state the azimuth of the observation.
 
-An estimate of the execution duration is critical to allow the users of the queue to estimate how much observing time has been planned.
+An estimate of the execution duration is critical to allow the clients of the queue to estimate how much observing time has been planned.
+
+Determining this information from the observing request submission is still to be decided.
+For observing scripts, the script should be queried with the supplied execution parameters (possibly by executing the script in a special mode) and the response should include the required information in an agreed upon format.
+For observing sequences that are not associated with a script, the queue must be able to analyze the observing request in conjunction with the supplied parameters to determine the same information.
+It is unreasonable to expect the queue to be able to analyze all possible observing scripts to be able to determine estimated duration and other properties useful for the queue, therefore we require that observing scripts include the logic necessary to calculate this information.
 
 \subsection{Scheduler Interaction with Queue}
 
-With the addition of an observing queue to the system the scheduler can interact with the observing system and the operator in a well understood, visible, and predictable manner.
-There is no need for the operator to pause the scheduler when calibrations or non-survey observing is ongoing, since the scheduler can see if the queue is empty, see if it is running, and see that the telescope dome is open.
+With the addition of an observing queue to the architecture the scheduler can interact with the OCS Executive and the operator in a well understood, visible, and predictable manner.
+There is no need for the operator to pause the scheduler when calibrations or non-survey observing is ongoing, since the scheduler can see if the queue is empty, and see if it is running, in addition to information it already has available such as the dome status.
 The operator only needs to pause the scheduler if it is known that survey observations should \emph{not} be observed at that time.
 
-The scheduler can fully interact with the queue, allowing it to change its mind if conditions change.
+The scheduler can fully interact with the queue, allowing it to adjust the queue contents if conditions change.
 
 The scheduler logic could be similar to:
 
@@ -104,33 +111,33 @@ Adding 5 minutes of deep drilling observations to the queue at one time would in
 There is no requirement for the scheduler to do this, but the flexibility is there at no additional cost to the queue implementation.
 The operator can still pause/clear the queue if they have to override observing.
 
-If the queue is paused and the queue is empty, for example the previous nextVisit expired, the scheduler has the option of continually adding items to the queue following the logic above.
+If the queue is paused and the queue is empty, for example the previous \texttt{nextVisit} expired, the scheduler has the option of continually adding items to the queue following the logic above.
 In this way if the queue restarts there is always something ready to be executed.
 If the operator does not want the scheduler interfering, the scheduler can be paused.
 
 TBD: If the scheduler adds multiple observations to the queue, it might be desirable for the queue to be able to retain the grouping of related observations, for example, in rejecting attempts to insert new observations into the middle of the observing block, or allowing a command to remove all related entries from the queue by specifying either the index or insertion ID of a single observation.
-In this mode, they should probably all be given the same unique "transaction" label.
+In this mode, they should probably all be given the same unique "transaction" label and that label should propagate to the data headers.
 
-\subsection{Prompt Processing Interaction with Queue}
+\subsection{DM Prompt Processing Interaction with Queue}
 
-Whenever an observation gets to the top of the queue (position 1) a nextVisit message will be issued that will include a unique label assigned by the queue.
-This label will be included in the parameters sent to the OCS for the observing script and should be propagated into data headers.
-DM will use the nextVisit message to configure the prompt processing system and will be looking for the label in the incoming data.
+Whenever an observation gets to the top of the queue (position 1) a \texttt{nextVisit} event message will be issued that will include a unique label assigned by the queue.
+This label will be included in the parameters sent to the OCS for the observing request and should be propagated into data headers.
+DM will use the \texttt{nextVisit} event message to configure the prompt processing system and will be looking for the label in the incoming data.
 To make it easier for DM to spot missing data, the unique label should finish with an incrementing integer.
 
-If the item at the top of the queue passes its expiry date (or is removed by some other means without being sent for observation), this change of status of NextVisit will be broadcast so that DM can stop waiting for data that will never appear.
+If the item at the top of the queue passes its expiry date (or is removed by some other means without being sent for observation), this change of status of \texttt{nextVisit} will be broadcast so that DM can stop waiting for data that will never appear.
 
-All observation requests will be given unique labels, "transaction ids", when they get to the nextVisit position in the queue.
+All observation requests will be given unique labels, "transaction ids", when they get to the \texttt{nextVisit} position in the queue.
 The prompt processing system will have enough information to decide whether the data from that observation should be processed.
 
-\subsection{User Interaction with Queue}
+\subsection{Client and Human Interactions with Queue}
 
-Trusted observers should be able to pause the queue and manipulate entries in the queue by deleting, rearranging, or adding new calibration or engineering observations.
+Authorized clients and users should be able to pause the queue and manipulate entries in the queue by deleting, rearranging, or adding new calibration or engineering observations.
 
-Every time the queue state is updated a new SAL topic will be issued.
+Every time the queue state is updated a new SAL event topic will be issued.
 This allows clients to determine how much time is covered by the queue and allows User Interfaces to display the current state of the queue.
 
-Users should be able to manipulate the queue using the command line or a user interface by clicking on buttons.
+Authorized clients should be able to manipulate the queue using the command line or a user interface by clicking on buttons.
 UI features like rearranging the queue by dragging are not required in the initial version.
 
 \subsection{Queue Interaction with OCS}
@@ -138,7 +145,7 @@ UI features like rearranging the queue by dragging are not required in the initi
 The interaction between the queue and the OCS Executive is critical for smooth operation of the queue observing system.
 
 When the queue is active, it has to monitor the OCS to determine if the OCS is idle, available to receive observations, or locked out.
-If the OCS is accepting observations the top entry on the queue should be sent to the OCS, including all parameters supplied externally and any parameters added by the queue (for example the nextVisit label) or, possibly, from observing script introspection.\footnote{This needs discussion. It's possible that the OCS could ask again itself for this information if it is needed. Dome tracking is presumably listening to the nextVisit message}.
+If the OCS is accepting observations the top entry on the queue should be sent to the OCS, including all parameters supplied externally and any parameters added by the queue (for example the \texttt{nextVisit} label) or, possibly, from observing script introspection.\footnote{This needs discussion. It's possible that the OCS could ask again itself for this information if it is needed. Dome tracking is presumably listening to the \texttt{nextVisit} message}.
 
 If the OCS reports that the observation being executed has failed for some reason the queue will pause automatically and indicate the reason for pausing.
 This is to prevent the scheduler immediately sending a new observation that will fail in the same manner.
@@ -156,10 +163,10 @@ A pull mechanism removes the need for the queue to monitor the OCS idle status a
 
 \section{Calibration Observations}
 
-There have been proposals to do long-running calibration observations using a single observing script execution that could take 4 hours.
+There have been proposals to do long-running calibration observations using a single observing sequence execution that could take 4 hours.
 Whilst this is certainly possible with the queue paradigm and is going to happen extensively during commissioning, this is not a very operator-friendly view of observing and it makes it very difficult to restart the observation in exactly the correct place.
 
-For normal operations a better approach might be to have a script that submits the 4 hours of calibrations as 40 or 50 five minute observations.
+For normal operations a better approach might be to have a scripts that submits the 4 hours of calibrations as 40 or 50 five minute observations.
 The operator would then get an immediate visual feedback of how the calibrations are proceeding with the queue reporting how much time is left and if something goes wrong the queue will automatically pause and let the operator resend the observation that failed.
 
 \section{Queue Status Topics}
@@ -167,13 +174,13 @@ The operator would then get an immediate visual feedback of how the calibrations
 The queue must publish an update of its state every time the contents of the queue are changed.
 At minimum there must be sufficient information for the queue contents for a user interface to display a representation of the queue, including the summary sentence for the item, the estimated duration, and the unique queue ID (which allows the position of that item to be manipulated).
 
-Furthermore, whenever an observation request reaches position 1 a nextVisit message is issued with information sufficient for DM prompt processing and the telescope.
-The scheduler would also like a visitAfterNextVisit publication event describing the observatory state for position 2 in the queue.
+Furthermore, whenever an observation request reaches position 1 a \texttt{nextVisit} message is issued with information sufficient for DM prompt processing and the telescope.
+The scheduler would also like a \texttt{visitAfterNextVisit} publication event describing the observatory state for position 2 in the queue.
 
 \section{Conclusion}
 
 An observing queue has the potential to give LSST a unified observing system where the scheduler and calibration observations all operate through the same gateway.
-The queue will allow the observer to plan non-survey observations in an efficient manner without feeling the need to worry about wasting observing time with long gaps when switching between scheduler-driven observing and other forms of observing.
+The queue will allow the telescope operator to plan non-survey observations in an efficient manner without feeling the need to worry about wasting observing time with long gaps when switching between scheduler-driven observing and other forms of observing.
 
 \appendix
 \section{Proposed Queue Commands}
@@ -204,15 +211,14 @@ Remove all entries from the queue, including the next visit.
 \item[ocsq addback stdvisit --radec=1.5,0.5 --filter=u --expiry="2021-05-15T13:44:33" --exptime=30]
 
 Add a single observation with the specified parameters to the back of the queue.
-The observation script can be specified either as the name of an observing mode (which will correspond to an observing script in a standard location), the name of an observing script in a standard location, or the full path of a compliant executable.
-
+The observation request can be specified either as the name of an observing mode (which may correspond to an observing script in a standard location), or the name of an observing script in a standard location.
 
 \item[ocsq insert \$i flatfield --filter=g --exptime=300]
 
 Insert the observation at a specific location by index, moving the observation currently at that position down by one.
 This command will refuse to accept an index of 0 corresponding to the currently executing observation.
-Index 1 is the nextVisit slot.
-In most cases we do not want to change the next visit observation since this is being used by systems such as the dome and the prompt processing system to prepare.
+Index 1 is the \texttt{nextVisit} slot.
+In most cases we do not want to change the next visit observation since this is being used by components such as the dome or the DM prompt processing system to prepare.
 In the rare case where we do want to override next visit a \texttt{--force} parameter should be specified to indicate that you really do want to insert into position \#1.
 
 \item[ocsq cut --id=\$id]
